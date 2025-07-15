@@ -114,7 +114,5 @@ from matplotlib.animation import FFMpegWriter
 import os
 import uuid
 video_path = f"animation_{uuid.uuid4()}.mp4"
-writer = FFMpegWriter(fps=20)
-ani.save(video_path, writer=writer)
-st.video(video_path)
-os.remove(video_path)  # 임시 파일 삭제
+ani.save("animation.gif", writer="pillow")
+st.image("animation.gif")
