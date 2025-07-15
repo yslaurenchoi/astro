@@ -1,216 +1,120 @@
 import streamlit as st
-
 import numpy as np
-
-from astropy.io import fits
-
-from PIL import Image
-
-from astropy.coordinates import SkyCoord, EarthLocation, AltAz
-
-from astropy.time import Time
-
-from datetime import datetime
-
-
-# --- Streamlit 앱 페이지 설정 ---
-
-st.set_page_config(page_title="천문 이미지 분석기", layout="wide")
-
-st.title("🔭 천문 이미지 처리 앱")
-
-
-# --- 파일 업로더 ---
-
-uploaded_file = st.file_uploader(
-
-    "분석할 FITS 파일을 선택하세요.",
-
-    type=['fits', 'fit', 'fz']
-
-)
-
-
-# --- 서울 위치 설정 (고정값) ---
-
-seoul_location = EarthLocation(lat=37.5665, lon=126.9780, height=50)  # 서울 위도/경도/고도
-
-
-# --- 현재 시간 (UTC 기준) ---
-
-now = datetime.utcnow()
-
-now_astropy = Time(now)
-
-
-# --- 파일이 업로드되면 실행될 로직 ---
-
-if uploaded_file:
-
-    try:
-
-        with fits.open(uploaded_file) as hdul:
-
-            image_hdu = None
-
-            for hdu in hdul:
-
-                if hdu.data is not None and hdu.is_image:
-
-                    image_hdu = hdu
-
-                    break
-
-
-            if image_hdu is None:
-
-                st.error("파일에서 유효한 이미지 데이터를 찾을 수 없습니다.")
-
-            else:
-
-                header = image_hdu.header
-
-                data = image_hdu.data
-
-                data = np.nan_to_num(data)
-
-
-                st.success(f"**'{uploaded_file.name}'** 파일을 성공적으로 처리했습니다.")
-
-                col1, col2 = st.columns(2)
-
-
-                with col1:
-
-                    st.header("이미지 정보")
-
-                    st.text(f"크기: {data.shape[1]} x {data.shape[0]} 픽셀")
-
-                    if 'OBJECT' in header:
-
-                        st.text(f"관측 대상: {header['OBJECT']}")
-
-                    if 'EXPTIME' in header:
-
-                        st.text(f"노출 시간: {header['EXPTIME']} 초")
-
-
-                    st.header("물리량")
-
-                    mean_brightness = np.mean(data)
-
-                    st.metric(label="이미지 전체 평균 밝기", value=f"{mean_brightness:.2f}")
-
-
-                with col2:
-
-                    st.header("이미지 미리보기")
-
-                    if data.max() == data.min():
-
-                        norm_data = np.zeros(data.shape, dtype=np.uint8)
-
-                    else:
-
-                        scale_min = np.percentile(data, 5)
-
-                        scale_max = np.percentile(data, 99.5)
-
-                        data_clipped = np.clip(data, scale_min, scale_max)
-
-                        norm_data = (255 * (data_clipped - scale_min) / (scale_max - scale_min)).astype(np.uint8)
-
-
-                    img = Image.fromarray(norm_data)
-
-                    st.image(img, caption="업로드된 FITS 이미지", use_container_width=True)
-
-
-
-                # --- 사이드바: 현재 천체 위치 계산 ---
-
-                st.sidebar.header("🧭 현재 천체 위치 (서울 기준)")
-
-
-                if 'RA' in header and 'DEC' in header:
-
-                    try:
-
-                        target_coord = SkyCoord(ra=header['RA'], dec=header['DEC'], unit=('hourangle', 'deg'))
-
-                        altaz = target_coord.transform_to(AltAz(obstime=now_astropy, location=seoul_location))
-
-                        altitude = altaz.alt.degree
-
-                        azimuth = altaz.az.degree
-
-
-                        st.sidebar.metric("고도 (°)", f"{altitude:.2f}")
-
-                        st.sidebar.metric("방위각 (°)", f"{azimuth:.2f}")
-
-                    except Exception as e:
-
-                        st.sidebar.warning(f"천체 위치 계산 실패: {e}")
-
-                else:
-
-                    st.sidebar.info("FITS 헤더에 RA/DEC 정보가 없습니다.")
-
-
-    except Exception as e:
-
-        st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
-
-        st.warning("파일이 손상되었거나 유효한 FITS 형식이 아닐 수 있습니다.")
-
-else:
-
-    st.info("시작하려면 FITS 파일을 업로드해주세요.")
-
-
-# --- 💬 댓글 기능 (세션 기반) ---
-
-st.divider()
-
-st.header("💬 의견 남기기")
-
-
-if "comments" not in st.session_state:
-
-    st.session_state.comments = []
-
-
-with st.form(key="comment_form"):
-
-    name = st.text_input("이름을 입력하세요", key="name_input")
-
-    comment = st.text_area("댓글을 입력하세요", key="comment_input")
-
-    submitted = st.form_submit_button("댓글 남기기")
-
-
-    if submitted:
-
-        if name.strip() and comment.strip():
-
-            st.session_state.comments.append((name.strip(), comment.strip()))
-
-            st.success("댓글이 저장되었습니다.")
-
-        else:
-
-            st.warning("이름과 댓글을 모두 입력해주세요.")
-
-
-if st.session_state.comments:
-
-    st.subheader("📋 전체 댓글")
-
-    for i, (n, c) in enumerate(reversed(st.session_state.comments), 1):
-
-        st.markdown(f"**{i}. {n}**: {c}")
-
-else:
-
-    st.info("아직 댓글이 없습니다. 첫 댓글을 남겨보세요!")
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from scipy.integrate import odeint
+import uuid
+
+# Streamlit 앱 제목
+st.title("행성과 혜성의 궤도 시뮬레이션")
+
+# 사용자 입력
+st.sidebar.header("입력 매개변수")
+star_mass = st.sidebar.slider("항성 질량 (태양 질량 단위)", 0.1, 10.0, 1.0)
+planet_mass = st.sidebar.slider("행성 질량 (지구 질량 단위)", 0.1, 100.0, 1.0)
+comet_mass = st.sidebar.slider("혜성 질량 (지구 질량 단위)", 0.001, 1.0, 0.01)
+comet_decay_rate = st.sidebar.slider("혜성 소멸 속도 (질량/초)", 0.0, 0.01, 0.001)
+semi_major_axis = st.sidebar.slider("행성 궤도 긴반지름 (AU)", 0.5, 10.0, 1.0)
+comet_distance = st.sidebar.slider("혜성-항성 초기 거리 (AU)", 1.0, 20.0, 5.0)
+
+# 상수
+G = 6.67430e-11  # 중력 상수 (m^3 kg^-1 s^-2)
+M_sun = 1.989e30  # 태양 질량 (kg)
+M_earth = 5.972e24  # 지구 질량 (kg)
+AU = 1.496e11  # 천문단위 (m)
+year = 365.25 * 24 * 3600  # 1년 (초)
+
+# 질량 변환
+M_star = star_mass * M_sun
+M_planet = planet_mass * M_earth
+M_comet = comet_mass * M_earth
+
+# Kepler 제3법칙으로 행성 궤도 주기 계산
+def kepler_period(a, M):
+    return 2 * np.pi * np.sqrt((a * AU)**3 / (G * M))
+
+# 행성 운동 (원형 궤도 가정)
+T_planet = kepler_period(semi_major_axis, M_star)
+omega_planet = 2 * np.pi / T_planet
+
+# 혜성 운동 (단순화된 포물선 궤적)
+v_comet = np.sqrt(G * M_star / (comet_distance * AU))  # 초기 속도
+comet_vx = -v_comet  # 항성 방향으로 초기 속도 설정
+comet_vy = 0.0
+
+# 초기 조건
+planet_pos = np.array([semi_major_axis * AU, 0.0])
+comet_pos = np.array([comet_distance * AU, 0.0])
+comet_vel = np.array([comet_vx, comet_vy])
+
+# 운동 방정식 (혜성)
+def equations(state, t, M, decay_rate):
+    x, y, vx, vy = state
+    r = np.sqrt(x**2 + y**2)
+    ax = -G * M * x / r**3
+    ay = -G * M * y / r**3
+    return [vx, vy, ax, ay]
+
+# 시간 배열
+t = np.linspace(0, T_planet, 1000)
+
+# 혜성 궤적 계산
+state0 = [comet_pos[0], comet_pos[1], comet_vel[0], comet_vel[1]]
+comet_traj = odeint(equations, state0, t, args=(M_star, comet_decay_rate))
+
+# 애니메이션 생성
+fig, ax = plt.subplots(figsize=(8, 8))
+ax.set_xlim(-15 * AU, 15 * AU)
+ax.set_ylim(-15 * AU, 15 * AU)
+ax.set_xlabel("X (AU)")
+ax.set_ylabel("Y (AU)")
+ax.grid(True)
+
+star, = ax.plot(0, 0, 'yo', markersize=15, label="Star")
+planet, = ax.plot([], [], 'bo', markersize=8, label="Planet")
+comet, = ax.plot([], [], 'go', markersize=5, label="Comet")
+comet_trail, = ax.plot([], [], 'g-', alpha=0.5)
+ax.legend()
+
+def init():
+    planet.set_data([], [])
+    comet.set_data([], [])
+    comet_trail.set_data([], [])
+    return planet, comet, comet_trail
+
+def animate(i):
+    # 행성 위치 (원형 궤도)
+    theta = omega_planet * t[i]
+    planet_x = semi_major_axis * AU * np.cos(theta)
+    planet_y = semi_major_axis * AU * np.sin(theta)
+    planet.set_data([planet_x / AU], [planet_y / AU])
+    
+    # 혜성 위치
+    comet_x, comet_y = comet_traj[i, 0], comet_traj[i, 1]
+    comet.set_data([comet_x / AU], [comet_y / AU])
+    
+    # 혜성 궤적
+    comet_trail.set_data(comet_traj[:i, 0] / AU, comet_traj[:i, 1] / AU)
+    
+    # 혜성 질량 감소 효과 (마커 크기 조정)
+    current_mass = M_comet * np.exp(-comet_decay_rate * t[i])
+    comet.set_markersize(5 * (current_mass / M_comet)**0.5)
+    
+    return planet, comet, comet_trail
+
+# 애니메이션
+ani = FuncAnimation(fig, animate, init_func=init, frames=len(t), interval=50, blit=True)
+
+# Streamlit에 애니메이션 표시
+st.write("### 궤도 애니메이션")
+st.pyplot(fig)
+
+# Matplotlib 애니메이션을 HTML로 변환하여 Streamlit에 표시
+from matplotlib.animation import FFMpegWriter
+import os
+import uuid
+video_path = f"animation_{uuid.uuid4()}.mp4"
+writer = FFMpegWriter(fps=20)
+ani.save(video_path, writer=writer)
+st.video(video_path)
+os.remove(video_path)  # 임시 파일 삭제
